@@ -92,7 +92,16 @@ class BiliDownloader(star.Star):
         # 初始化权限配置
         self.permissions = self.config.get("permissions", {})
         self.open_groups = self.permissions.get("open_groups", [])
-        self.restricted_groups = self.permissions.get("restricted_groups", {})
+        # restricted_groups 可能是字符串（JSON格式）或字典
+        restricted_groups_raw = self.permissions.get("restricted_groups", "{}")
+        if isinstance(restricted_groups_raw, str):
+            try:
+                self.restricted_groups = json.loads(restricted_groups_raw) if restricted_groups_raw.strip() else {}
+            except json.JSONDecodeError:
+                logger.warning(f"restricted_groups JSON解析失败，使用空对象: {restricted_groups_raw}")
+                self.restricted_groups = {}
+        else:
+            self.restricted_groups = restricted_groups_raw or {}
 
     async def initialize(self):
         """插件初始化时调用，重新加载配置"""
@@ -106,7 +115,16 @@ class BiliDownloader(star.Star):
             # 重新加载权限配置
             self.permissions = self.config.get("permissions", {})
             self.open_groups = self.permissions.get("open_groups", [])
-            self.restricted_groups = self.permissions.get("restricted_groups", {})
+            # restricted_groups 可能是字符串（JSON格式）或字典
+            restricted_groups_raw = self.permissions.get("restricted_groups", "{}")
+            if isinstance(restricted_groups_raw, str):
+                try:
+                    self.restricted_groups = json.loads(restricted_groups_raw) if restricted_groups_raw.strip() else {}
+                except json.JSONDecodeError:
+                    logger.warning(f"restricted_groups JSON解析失败，使用空对象: {restricted_groups_raw}")
+                    self.restricted_groups = {}
+            else:
+                self.restricted_groups = restricted_groups_raw or {}
             # 重新加载权限配置
             self.permissions = self.config.get("permissions", {})
             self.open_groups = self.permissions.get("open_groups", [])
