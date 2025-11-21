@@ -1031,7 +1031,7 @@ class BiliDownloader(star.Star):
         """检查用户是否有权限使用命令
         
         权限规则：
-        1. 私聊：只有管理员可以使用
+        1. 私聊：只有管理员可以使用，非管理员静默忽略（不回复）
         2. 群聊：
            - 只有在开放群组列表中的群组才能使用
            - 如果在受限群组配置中，只有配置的QQ号才能使用
@@ -1041,8 +1041,7 @@ class BiliDownloader(star.Star):
         Returns:
             tuple: (是否有权限, 错误消息)
             - (True, ""): 有权限，继续执行
-            - (False, "错误消息"): 没有权限，需要回复错误消息（仅私聊非管理员）
-            - (False, None): 群组未配置或用户没权限，静默忽略（不回复）
+            - (False, None): 没有权限，静默忽略（不回复）
         """
         # 获取群ID和用户ID
         group_id = event.get_group_id()
@@ -1053,7 +1052,8 @@ class BiliDownloader(star.Star):
             if event.is_admin():
                 return True, ""
             else:
-                return False, "私聊模式下，只有管理员可以使用此功能。"
+                # 私聊非管理员，静默忽略（不回复）
+                return False, None
         
         # 转换为字符串进行比较
         group_id_str = str(group_id).strip()
