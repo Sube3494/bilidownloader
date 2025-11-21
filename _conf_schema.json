@@ -146,6 +146,24 @@
             "hint": "如果使用Header认证方式，指定在请求头中的字段名，例如：X-API-Key、Authorization等"
           }
         }
+      },
+      "permissions": {
+        "type": "object",
+        "description": "权限控制配置",
+        "items": {
+          "open_groups": {
+            "type": "list",
+            "description": "开放群组列表（群内所有人可用）",
+            "default": [],
+            "hint": "群号列表（QQ平台为QQ群号），这些群的所有成员都可以使用下载功能。可通过 /sid 获取群号"
+          },
+          "restricted_groups": {
+            "type": "dict",
+            "description": "受限群组配置（群内部分人可用）",
+            "default": {},
+            "hint": "格式：{\"群号\": [\"QQ号1\", \"QQ号2\"]}\n\n示例（QQ平台）：\n{\n  \"123456789\": [\"111111111\", \"222222222\"],\n  \"987654321\": [\"333333333\"]\n}\n\n说明：\n- 键名：群号（QQ平台为QQ群号，可通过 /sid 获取）\n- 值：该群内允许使用的QQ号列表（数组）\n- 如果群号在列表中，但用户QQ号不在对应的数组中，则无法使用\n\n注意：不同平台的ID格式可能不同，QQ平台为QQ号和QQ群号"
+          }
+        }
       }
     }
   }

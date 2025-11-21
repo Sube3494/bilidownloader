@@ -88,6 +88,11 @@ class BiliDownloader(star.Star):
         
         # 确保下载目录存在
         os.makedirs(self.download_path, exist_ok=True)
+        
+        # 初始化权限配置
+        self.permissions = self.config.get("permissions", {})
+        self.open_groups = self.permissions.get("open_groups", [])
+        self.restricted_groups = self.permissions.get("restricted_groups", {})
 
     async def initialize(self):
         """插件初始化时调用，重新加载配置"""
@@ -98,6 +103,14 @@ class BiliDownloader(star.Star):
             self._update_config_values()
             # 确保下载目录存在
             os.makedirs(self.download_path, exist_ok=True)
+            # 重新加载权限配置
+            self.permissions = self.config.get("permissions", {})
+            self.open_groups = self.permissions.get("open_groups", [])
+            self.restricted_groups = self.permissions.get("restricted_groups", {})
+            # 重新加载权限配置
+            self.permissions = self.config.get("permissions", {})
+            self.open_groups = self.permissions.get("open_groups", [])
+            self.restricted_groups = self.permissions.get("restricted_groups", {})
 
     def _update_config_values(self):
         """更新配置值到实例变量"""
@@ -891,6 +904,49 @@ class BiliDownloader(star.Star):
         logger.warning("API获取视频信息失败")
         return False, "", []
 
+    def _check_permission(self, event: AstrMessageEvent) -> tuple[bool, str]:
+        """检查用户是否有权限使用命令
+        
+        Returns:
+            tuple: (是否有权限, 错误消息)
+        """
+        # 获取群ID和用户ID
+        group_id = event.get_group_id()
+        sender_id = event.get_sender_id()
+        
+        # 如果是私聊，默认允许（或者你可以根据需要修改）
+        if not group_id:
+            return True, ""
+        
+        # 转换为字符串进行比较
+        group_id_str = str(group_id).strip()
+        sender_id_str = str(sender_id).strip()
+        
+        # 检查是否在开放群组列表中（所有人可用）
+        if group_id_str in self.open_groups:
+            return True, ""
+        
+        # 检查是否在受限群组列表中（部分人可用）
+        if group_id_str in self.restricted_groups:
+            allowed_users = self.restricted_groups[group_id_str]
+            # 确保是列表格式
+            if isinstance(allowed_users, list):
+                if sender_id_str in allowed_users:
+                    return True, ""
+                else:
+                    return False, f"您（ID: {sender_id_str}）没有权限使用此功能。请联系管理员添加权限。\n\n💡 提示：可通过 /sid 获取您的ID"
+            else:
+                # 如果不是列表格式，记录错误但允许使用（容错处理）
+                logger.warning(f"受限群组 {group_id_str} 的配置格式错误，应为列表")
+                return True, ""
+        
+        # 如果既不在开放列表也不在受限列表，默认不允许
+        # 但如果两个列表都为空，则允许所有人使用（向后兼容）
+        if not self.open_groups and not self.restricted_groups:
+            return True, ""
+        
+        return False, f"此群组（ID: {group_id_str}）未配置权限。请联系管理员配置。\n\n💡 提示：可通过 /sid 获取群组ID"
+    
     @filter.command("bili", alias={"bilibili", "b站", "B站"})
     async def download_video(self, event: AstrMessageEvent, url: str = ""):
         """下载B站视频
@@ -900,6 +956,12 @@ class BiliDownloader(star.Star):
         
         如果视频有多个分P，会提示选择下载全部或指定分P
         """
+        # 检查权限
+        has_permission, error_msg = self._check_permission(event)
+        if not has_permission:
+            yield event.plain_result(error_msg)
+            return
+        
         if not url:
             yield event.plain_result("请提供视频URL\n用法: /bili <视频URL>")
             return
@@ -1346,6 +1408,12 @@ class BiliDownloader(star.Star):
         3. JSON格式: {"name": "value"}
         4. 纯文本格式: name=value (多行)
         """
+        # 检查权限（设置Cookie需要权限）
+        has_permission, error_msg = self._check_permission(event)
+        if not has_permission:
+            yield event.plain_result(error_msg)
+            return
+        
         if not cookie:
             yield event.plain_result(
                 "请提供Cookie\n"
@@ -1450,6 +1518,12 @@ class BiliDownloader(star.Star):
         /bili-set danmaku true
         /bili-set single_pattern <视频标题>[<清晰度>]
         """
+        # 检查权限（设置配置需要权限）
+        has_permission, error_msg = self._check_permission(event)
+        if not has_permission:
+            yield event.plain_result(error_msg)
+            return
+        
         if not key:
             help_msg = """📝 设置插件配置
 
