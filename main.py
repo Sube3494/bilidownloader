@@ -1088,7 +1088,6 @@ class BiliDownloader(star.Star):
         # 检查权限
         has_permission, error_msg = self._check_permission(event)
         if not has_permission:
-            yield event.plain_result(error_msg)
             return
         
         if not url:
