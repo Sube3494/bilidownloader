@@ -1,0 +1,153 @@
+{
+  "bbdown_path": {
+    "type": "string",
+    "description": "BBDown可执行文件路径",
+    "default": "BBDown",
+    "hint": "如果BBDown在系统PATH中，直接填写 'BBDown' 即可。否则填写完整路径，例如：'C:\\Program Files\\BBDown\\BBDown.exe' 或 '/usr/local/bin/BBDown'"
+  },
+  "download_path": {
+    "type": "string",
+    "description": "视频下载保存路径",
+    "default": "./downloads",
+    "hint": "视频文件保存的目录路径，支持相对路径和绝对路径"
+  },
+  "classify_by_owner": {
+    "type": "bool",
+    "description": "按UP主名称分类文件夹",
+    "default": true,
+    "hint": "是否在下载路径下按UP主名称创建子文件夹进行分类。开启后，视频会保存在 <下载路径>/<UP主名称>/ 目录下"
+  },
+  "cookie": {
+    "type": "text",
+    "description": "B站Cookie（用于下载需要登录的视频）",
+    "default": "",
+    "hint": "支持多种格式：\n1. 浏览器格式: SESSDATA=xxx; DedeUserID=xxx\n2. Netscape格式: 从浏览器导出的cookie文件\n3. JSON格式: {\"SESSDATA\": \"xxx\"}\n4. 纯文本格式: 多行键值对\n程序会自动识别并解析"
+  },
+  "default_options": {
+    "type": "object",
+    "description": "默认下载选项",
+    "items": {
+      "quality": {
+        "type": "string",
+        "description": "默认清晰度",
+        "default": "",
+        "hint": "留空表示不指定，让BBDown自动选择。可选值：8K, 4K, 1080P60, 1080P, 720P60, 720P, 480P, 360P等"
+      },
+      "download_danmaku": {
+        "type": "bool",
+        "description": "是否下载弹幕",
+        "default": false,
+        "hint": "是否默认下载视频弹幕文件"
+      },
+      "download_subtitle": {
+        "type": "bool",
+        "description": "是否下载字幕",
+        "default": true,
+        "hint": "是否默认下载视频字幕文件"
+      }
+    }
+  },
+  "naming": {
+    "type": "object",
+    "description": "文件命名格式配置",
+    "items": {
+      "single_video_pattern": {
+        "type": "string",
+        "description": "单个视频文件命名格式",
+        "default": "<视频标题>[<清晰度>]",
+        "hint": "可用参数：<视频标题> <UP主名称> <清晰度> <BV号> <分辨率> <帧率> <视频编码> <视频码率> <音频编码> <音频码率> <UP主MID> <发布时间> <API类型> <AID> <CID>\n\n示例：<视频标题>[<清晰度>] 或 <UP主名称>-<视频标题>-<清晰度>\n\n完整参数列表：/bili-naming"
+      },
+      "multi_video_pattern": {
+        "type": "string",
+        "description": "分P视频文件命名格式",
+        "default": "<视频标题>/[P<分P序号补零>]<分P标题>[<清晰度>]",
+        "hint": "可用参数：<视频标题> <分P序号> <分P序号补零> <分P标题> <清晰度> <UP主名称> <BV号> <分辨率> <帧率> <视频编码> <视频码率> <音频编码> <音频码率> <UP主MID> <发布时间> <API类型> <AID> <CID>\n\n示例：<视频标题>/[P<分P序号补零>]<分P标题>[<清晰度>] 或 <UP主名称>-<视频标题>/P<分P序号>-<分P标题>\n\n完整参数列表：/bili-naming"
+      }
+    }
+  },
+  "alist": {
+    "type": "object",
+    "description": "OpenList配置（用于生成下载链接）",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "是否启用OpenList链接生成",
+        "default": false,
+        "hint": "开启后，下载完成会自动生成OpenList下载链接"
+      },
+      "base_url": {
+        "type": "string",
+        "description": "OpenList访问地址",
+        "default": "",
+        "hint": "OpenList的访问地址，例如：https://openlist.example.com 或 http://localhost:5244。注意：不要带末尾的斜杠"
+      },
+      "password": {
+        "type": "string",
+        "description": "文件夹密码（可选）",
+        "default": "",
+        "hint": "文件夹密码，用于获取文件直链。\n\n说明：\n1. 适用于公开目录+文件夹密码的场景\n2. 无需登录，只需提供密码即可\n3. 如果目录没有密码，可以留空（空字符串）"
+      },
+      "alist_storage_path": {
+        "type": "string",
+        "description": "OpenList中的存储路径",
+        "default": "/bilibili",
+        "hint": "文件在OpenList中存储的路径，例如：/bilibili 或 /downloads/bilibili。必须以 / 开头"
+      },
+      "shortener": {
+        "type": "object",
+        "description": "短链服务配置（可选）",
+        "items": {
+          "enabled": {
+            "type": "bool",
+            "description": "是否启用短链转换",
+            "default": false,
+            "hint": "开启后，生成的链接会自动转换为短链"
+          },
+          "api_url": {
+            "type": "string",
+            "description": "短链服务API地址",
+            "default": "",
+            "hint": "短链服务的API地址\n\n推荐的开源短链服务：\n- ShortLinks: https://github.com/Sube3494/shortlinks\n- YOURLS: https://yourls.org/\n- Polr: https://github.com/cydrobolt/polr\n- Kutt: https://github.com/thedevs-network/kutt\n- Shlink: https://shlink.io/"
+          },
+          "method": {
+            "type": "string",
+            "description": "请求方法",
+            "default": "POST",
+            "hint": "API请求方法：POST 或 GET"
+          },
+          "data_key": {
+            "type": "string",
+            "description": "POST请求的数据字段名",
+            "default": "url",
+            "hint": "POST请求时，原始URL在请求体中的字段名，常见值：url、target、longUrl等"
+          },
+          "params_key": {
+            "type": "string",
+            "description": "GET请求的参数名",
+            "default": "url",
+            "hint": "GET请求时，原始URL作为URL参数的参数名"
+          },
+          "api_key": {
+            "type": "string",
+            "description": "API密钥（可选）",
+            "default": "",
+            "hint": "如果短链服务需要API密钥进行认证，填写在这里。如果不设置或设置为空，则不启用认证"
+          },
+          "auth_method": {
+            "type": "string",
+            "description": "认证方式",
+            "default": "header",
+            "hint": "API密钥的传递方式：header（请求头）或 query（URL参数）"
+          },
+          "auth_header": {
+            "type": "string",
+            "description": "认证头字段名（可选）",
+            "default": "X-API-Key",
+            "hint": "如果使用Header认证方式，指定在请求头中的字段名，例如：X-API-Key、Authorization等"
+          }
+        }
+      }
+    }
+  }
+}
+
