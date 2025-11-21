@@ -381,6 +381,8 @@ class BiliDownloader(star.Star):
         try:
             import aiohttp
             
+            logger.debug(f"开始短链转换: API={api_url}, URL长度={len(url)}")
+            
             # 构建请求头
             headers = {"Content-Type": "application/json"}
             
@@ -395,56 +397,98 @@ class BiliDownloader(star.Star):
                 if auth_method.lower() == "query":
                     # Query参数方式：添加到URL参数中
                     params["api_key"] = api_key
+                    logger.debug(f"使用Query参数认证: api_key={api_key[:10]}...")
                 else:
                     # Header方式（默认）：添加到请求头
                     headers[auth_header] = api_key
+                    logger.debug(f"使用Header认证: {auth_header}={api_key[:10]}...")
             
             method = shortener_config.get("method", "POST").upper()
+            logger.debug(f"请求方法: {method}")
+            
+            # 增加超时时间，避免Linux上网络延迟导致失败
+            # total: 总超时时间（包括连接、发送、接收）
+            # connect: 连接超时时间
+            # 如果网络较慢，可以适当增加这些值
+            timeout = aiohttp.ClientTimeout(total=15, connect=10)
             
             if method == "POST":
                 # POST方式：请求体包含原始URL
                 data_key = shortener_config.get("data_key", "url")
                 data = {data_key: url}
+                logger.debug(f"POST请求体: {data_key}={url[:100]}...")
                 
                 async with aiohttp.ClientSession() as session:
-                    async with session.post(api_url, json=data, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                        if resp.status == 200:
-                            try:
-                                result = await resp.json()
-                                short_url = self._extract_short_url(result)
-                                if short_url:
-                                    logger.debug(f"短链转换成功: {url[:50]}... -> {short_url}")
-                                    return short_url
-                                else:
-                                    logger.warning(f"短链API响应中未找到短链字段: {result}")
-                            except Exception as e:
-                                logger.warning(f"解析短链API响应失败: {e}")
-                        else:
+                    try:
+                        async with session.post(api_url, json=data, headers=headers, params=params, timeout=timeout) as resp:
                             response_text = await resp.text()
-                            logger.warning(f"短链API返回错误: HTTP {resp.status}, {response_text[:200]}")
+                            logger.debug(f"短链API响应状态: {resp.status}, 响应长度: {len(response_text)}")
+                            
+                            if resp.status == 200:
+                                try:
+                                    result = await resp.json()
+                                    logger.debug(f"短链API响应: {result}")
+                                    short_url = self._extract_short_url(result)
+                                    if short_url:
+                                        logger.info(f"短链转换成功: {url[:50]}... -> {short_url}")
+                                        return short_url
+                                    else:
+                                        logger.warning(f"短链API响应中未找到短链字段，响应内容: {result}")
+                                except Exception as e:
+                                    logger.warning(f"解析短链API响应失败: {e}, 响应文本: {response_text[:500]}")
+                                    import traceback
+                                    logger.debug(traceback.format_exc())
+                            else:
+                                logger.warning(f"短链API返回错误: HTTP {resp.status}, 响应: {response_text[:500]}")
+                    except asyncio.TimeoutError:
+                        logger.warning(f"短链API请求超时: {api_url}")
+                    except aiohttp.ClientError as e:
+                        logger.warning(f"短链API请求失败: {type(e).__name__}: {e}")
+                        import traceback
+                        logger.debug(traceback.format_exc())
             else:
                 # GET方式：URL作为参数
                 params_key = shortener_config.get("params_key", "url")
                 params[params_key] = url
+                logger.debug(f"GET请求参数: {params_key}={url[:100]}...")
                 
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(api_url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                        if resp.status == 200:
-                            try:
-                                result = await resp.json()
-                                short_url = self._extract_short_url(result)
-                                if short_url:
-                                    logger.debug(f"短链转换成功: {url[:50]}... -> {short_url}")
-                                    return short_url
-                                else:
-                                    logger.warning(f"短链API响应中未找到短链字段: {result}")
-                            except Exception as e:
-                                logger.warning(f"解析短链API响应失败: {e}")
-                        else:
+                    try:
+                        async with session.get(api_url, params=params, headers=headers, timeout=timeout) as resp:
                             response_text = await resp.text()
-                            logger.warning(f"短链API返回错误: HTTP {resp.status}, {response_text[:200]}")
+                            logger.debug(f"短链API响应状态: {resp.status}, 响应长度: {len(response_text)}")
+                            
+                            if resp.status == 200:
+                                try:
+                                    result = await resp.json()
+                                    logger.debug(f"短链API响应: {result}")
+                                    short_url = self._extract_short_url(result)
+                                    if short_url:
+                                        logger.info(f"短链转换成功: {url[:50]}... -> {short_url}")
+                                        return short_url
+                                    else:
+                                        logger.warning(f"短链API响应中未找到短链字段，响应内容: {result}")
+                                except Exception as e:
+                                    logger.warning(f"解析短链API响应失败: {e}, 响应文本: {response_text[:500]}")
+                                    import traceback
+                                    logger.debug(traceback.format_exc())
+                            else:
+                                logger.warning(f"短链API返回错误: HTTP {resp.status}, 响应: {response_text[:500]}")
+                    except aiohttp.ServerTimeoutError as e:
+                        logger.warning(f"短链API服务器超时（总超时15秒）: {api_url}, 错误: {e}")
+                        logger.warning(f"可能原因：网络延迟、服务器响应慢或网络连接问题")
+                    except asyncio.TimeoutError:
+                        logger.warning(f"短链API请求超时（总超时15秒）: {api_url}")
+                        logger.warning(f"可能原因：网络延迟、服务器响应慢或网络连接问题")
+                    except aiohttp.ClientConnectorError as e:
+                        logger.warning(f"短链API连接失败: {api_url}, 错误: {e}")
+                        logger.warning(f"可能原因：网络不通、DNS解析失败或服务器不可达")
+                    except aiohttp.ClientError as e:
+                        logger.warning(f"短链API请求失败: {type(e).__name__}: {e}")
+                        import traceback
+                        logger.debug(traceback.format_exc())
         except Exception as e:
-            logger.warning(f"短链转换失败: {e}")
+            logger.warning(f"短链转换失败: {type(e).__name__}: {e}")
             import traceback
             logger.debug(traceback.format_exc())
         
@@ -698,11 +742,22 @@ class BiliDownloader(star.Star):
             
             # 如果启用了短链服务，并行转换所有链接
             if shortener_config.get("enabled", False) and valid_links:
+                logger.info(f"开始转换 {len(valid_links)} 个链接为短链...")
                 try:
                     short_tasks = [self._shorten_url(url, shortener_config) for url in valid_links]
                     short_urls = await asyncio.gather(*short_tasks, return_exceptions=True)
+                    # 记录转换结果
+                    success_count = sum(1 for url in short_urls if url and not isinstance(url, Exception))
+                    logger.info(f"短链转换完成: {success_count}/{len(valid_links)} 成功")
+                    for i, (original, short) in enumerate(zip(valid_links, short_urls)):
+                        if isinstance(short, Exception):
+                            logger.warning(f"链接 {i+1} 转换失败: {short}")
+                        elif not short:
+                            logger.warning(f"链接 {i+1} 转换返回空: {original[:50]}...")
                 except Exception as e:
                     logger.error(f"批量短链转换失败: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
                     short_urls = [None] * len(valid_links)
             else:
                 short_urls = valid_links if not shortener_config.get("enabled", False) else [None] * len(valid_links)
@@ -975,6 +1030,13 @@ class BiliDownloader(star.Star):
     def _check_permission(self, event: AstrMessageEvent) -> tuple[bool, str]:
         """检查用户是否有权限使用命令
         
+        权限规则：
+        1. 私聊：只有管理员可以使用
+        2. 群聊：
+           - 只有在开放群组列表中的群组才能使用
+           - 如果在受限群组配置中，只有配置的QQ号才能使用
+           - 如果不在任何列表中，不允许使用
+        
         Returns:
             tuple: (是否有权限, 错误消息)
         """
@@ -982,38 +1044,37 @@ class BiliDownloader(star.Star):
         group_id = event.get_group_id()
         sender_id = event.get_sender_id()
         
-        # 如果是私聊，默认允许（或者你可以根据需要修改）
+        # 如果是私聊，只有管理员可以使用
         if not group_id:
-            return True, ""
+            if event.is_admin():
+                return True, ""
+            else:
+                return False, "私聊模式下，只有管理员可以使用此功能。"
         
         # 转换为字符串进行比较
         group_id_str = str(group_id).strip()
         sender_id_str = str(sender_id).strip()
         
-        # 检查是否在开放群组列表中（所有人可用）
+        # 检查是否在开放群组列表中
         if group_id_str in self.open_groups:
-            return True, ""
-        
-        # 检查是否在受限群组列表中（部分人可用）
-        if group_id_str in self.restricted_groups:
-            allowed_users = self.restricted_groups[group_id_str]
-            # 确保是列表格式
-            if isinstance(allowed_users, list):
-                if sender_id_str in allowed_users:
-                    return True, ""
+            # 检查是否在受限群组配置中（受限群组的优先级更高）
+            if group_id_str in self.restricted_groups:
+                allowed_users = self.restricted_groups[group_id_str]
+                # 确保是列表格式
+                if isinstance(allowed_users, list):
+                    if sender_id_str in allowed_users:
+                        return True, ""
+                    else:
+                        return False, f"您（ID: {sender_id_str}）没有权限使用此功能。请联系管理员添加权限。\n\n💡 提示：可通过 /sid 获取您的ID"
                 else:
-                    return False, f"您（ID: {sender_id_str}）没有权限使用此功能。请联系管理员添加权限。\n\n💡 提示：可通过 /sid 获取您的ID"
-            else:
-                # 如果不是列表格式，记录错误但允许使用（容错处理）
-                logger.warning(f"受限群组 {group_id_str} 的配置格式错误，应为列表")
-                return True, ""
-        
-        # 如果既不在开放列表也不在受限列表，默认不允许
-        # 但如果两个列表都为空，则允许所有人使用（向后兼容）
-        if not self.open_groups and not self.restricted_groups:
+                    # 如果不是列表格式，记录错误但允许使用（容错处理）
+                    logger.warning(f"受限群组 {group_id_str} 的配置格式错误，应为列表")
+                    return True, ""
+            # 如果在开放群组列表中且不在受限群组配置中，所有人可用
             return True, ""
         
-        return False, f"此群组（ID: {group_id_str}）未配置权限。请联系管理员配置。\n\n💡 提示：可通过 /sid 获取群组ID"
+        # 如果不在开放群组列表中，不允许使用
+        return False, f"此群组（ID: {group_id_str}）未配置权限。请联系管理员将群组添加到开放群组列表。\n\n💡 提示：可通过 /sid 获取群组ID"
     
     @filter.command("bili", alias={"bilibili", "b站", "B站"})
     async def download_video(self, event: AstrMessageEvent, url: str = ""):
@@ -1207,7 +1268,8 @@ class BiliDownloader(star.Star):
         
         if is_success:
             # 提取下载信息
-            result_msg = "✅ 下载完成！\n\n"
+            result_msg = "✅ 下载完成！\n"
+            result_msg += "─" * 30 + "\n"
             
             # 提取关键信息：视频标题和分P信息
             video_title = ""
@@ -1266,18 +1328,30 @@ class BiliDownloader(star.Star):
                     # 只显示选中的分P
                     filtered_pages = [p for p in page_info if any(f"P{num}:" in p for num in selected_pages_list)]
                     if filtered_pages:
-                        result_msg += "\n已下载分P：\n"
-                        for page in filtered_pages:
-                            result_msg += f"  {page}\n"
+                        # 如果只有一个分P，简化显示
+                        if len(filtered_pages) == 1:
+                            result_msg += f"📌 {filtered_pages[0]}\n"
+                        else:
+                            result_msg += "📌 已下载分P：\n"
+                            for page in filtered_pages:
+                                result_msg += f"   • {page}\n"
                     else:
-                        result_msg += "\n分P列表：\n"
-                        for page in page_info:
-                            result_msg += f"  {page}\n"
+                        # 如果只有一个分P，简化显示
+                        if len(page_info) == 1:
+                            result_msg += f"📌 {page_info[0]}\n"
+                        else:
+                            result_msg += "📌 分P列表：\n"
+                            for page in page_info:
+                                result_msg += f"   • {page}\n"
                 else:
                     # 下载全部，显示所有分P
-                    result_msg += "\n分P列表：\n"
-                    for page in page_info:
-                        result_msg += f"  {page}\n"
+                    # 如果只有一个分P，简化显示
+                    if len(page_info) == 1:
+                        result_msg += f"📌 {page_info[0]}\n"
+                    else:
+                        result_msg += "📌 分P列表：\n"
+                        for page in page_info:
+                            result_msg += f"   • {page}\n"
             elif not video_title:
                 # 如果没有提取到信息，显示默认消息
                 result_msg += "下载完成"
@@ -1348,9 +1422,16 @@ class BiliDownloader(star.Star):
                 current_config, video_title, page_info, selected_pages_info
             )
             if alist_links:
-                result_msg += "\n\n📥 下载链接：\n"
-                for link_info in alist_links:
-                    result_msg += f"  {link_info['name']}\n  {link_info['url']}\n"
+                result_msg += "─" * 30 + "\n"
+                result_msg += "📥 下载链接\n"
+                result_msg += "─" * 30 + "\n"
+                for i, link_info in enumerate(alist_links, 1):
+                    # 如果只有一个链接，简化显示
+                    if len(alist_links) == 1:
+                        result_msg += f"🔗 {link_info['url']}\n"
+                    else:
+                        result_msg += f"【{i}】{link_info['name']}\n"
+                        result_msg += f"   🔗 {link_info['url']}\n"
             else:
                 logger.warning("未生成OpenList链接，可能原因：文件未找到或文件名不匹配")
             
