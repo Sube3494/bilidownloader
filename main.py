@@ -1027,7 +1027,7 @@ class BiliDownloader(star.Star):
         logger.warning("API获取视频信息失败")
         return False, "", []
 
-    def _check_permission(self, event: AstrMessageEvent) -> tuple[bool, str]:
+    def _check_permission(self, event: AstrMessageEvent) -> tuple[bool, str | None]:
         """检查用户是否有权限使用命令
         
         权限规则：
@@ -1035,10 +1035,14 @@ class BiliDownloader(star.Star):
         2. 群聊：
            - 只有在开放群组列表中的群组才能使用
            - 如果在受限群组配置中，只有配置的QQ号才能使用
-           - 如果不在任何列表中，不允许使用
+           - 如果不在任何列表中，静默忽略（不回复）
+           - 如果在受限群组配置中但用户不在允许列表中，静默忽略（不回复）
         
         Returns:
             tuple: (是否有权限, 错误消息)
+            - (True, ""): 有权限，继续执行
+            - (False, "错误消息"): 没有权限，需要回复错误消息（仅私聊非管理员）
+            - (False, None): 群组未配置或用户没权限，静默忽略（不回复）
         """
         # 获取群ID和用户ID
         group_id = event.get_group_id()
@@ -1065,7 +1069,8 @@ class BiliDownloader(star.Star):
                     if sender_id_str in allowed_users:
                         return True, ""
                     else:
-                        return False, f"您（ID: {sender_id_str}）没有权限使用此功能。请联系管理员添加权限。\n\n💡 提示：可通过 /sid 获取您的ID"
+                        # 群组已配置，但用户没权限，静默忽略（不回复）
+                        return False, None
                 else:
                     # 如果不是列表格式，记录错误但允许使用（容错处理）
                     logger.warning(f"受限群组 {group_id_str} 的配置格式错误，应为列表")
@@ -1073,8 +1078,8 @@ class BiliDownloader(star.Star):
             # 如果在开放群组列表中且不在受限群组配置中，所有人可用
             return True, ""
         
-        # 如果不在开放群组列表中，不允许使用
-        return False, f"此群组（ID: {group_id_str}）未配置权限。请联系管理员将群组添加到开放群组列表。\n\n💡 提示：可通过 /sid 获取群组ID"
+        # 如果不在开放群组列表中，静默忽略（不回复）
+        return False, None
     
     @filter.command("bili", alias={"bilibili", "b站", "B站"})
     async def download_video(self, event: AstrMessageEvent, url: str = ""):
@@ -1088,6 +1093,10 @@ class BiliDownloader(star.Star):
         # 检查权限
         has_permission, error_msg = self._check_permission(event)
         if not has_permission:
+            # 如果error_msg为None，表示群组未配置，静默忽略（不回复）
+            # 如果error_msg不为None，表示有配置但用户没权限，需要回复错误消息
+            if error_msg:
+                yield event.plain_result(error_msg)
             return
         
         if not url:
@@ -1587,7 +1596,10 @@ class BiliDownloader(star.Star):
         # 检查权限（设置Cookie需要权限）
         has_permission, error_msg = self._check_permission(event)
         if not has_permission:
-            yield event.plain_result(error_msg)
+            # 如果error_msg为None，表示群组未配置，静默忽略（不回复）
+            # 如果error_msg不为None，表示有配置但用户没权限，需要回复错误消息
+            if error_msg:
+                yield event.plain_result(error_msg)
             return
         
         if not cookie:
@@ -1697,7 +1709,10 @@ class BiliDownloader(star.Star):
         # 检查权限（设置配置需要权限）
         has_permission, error_msg = self._check_permission(event)
         if not has_permission:
-            yield event.plain_result(error_msg)
+            # 如果error_msg为None，表示群组未配置，静默忽略（不回复）
+            # 如果error_msg不为None，表示有配置但用户没权限，需要回复错误消息
+            if error_msg:
+                yield event.plain_result(error_msg)
             return
         
         if not key:
