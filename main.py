@@ -90,8 +90,9 @@ class BiliDownloader(star.Star):
         # 确保下载目录存在
         os.makedirs(self.download_path, exist_ok=True)
         
-        # 初始化权限配置
-        self.permissions = self.config.get("permissions", {})
+        # 初始化权限配置（permissions在alist对象下）
+        alist_config = self.config.get("alist", {})
+        self.permissions = alist_config.get("permissions", {})
         self.open_groups = self.permissions.get("open_groups", [])
         # restricted_groups 可能是字符串（JSON格式）或字典
         restricted_groups_raw = self.permissions.get("restricted_groups", "{}")
@@ -113,8 +114,9 @@ class BiliDownloader(star.Star):
             self._update_config_values()
             # 确保下载目录存在
             os.makedirs(self.download_path, exist_ok=True)
-            # 重新加载权限配置
-            self.permissions = self.config.get("permissions", {})
+            # 重新加载权限配置（permissions在alist对象下）
+            alist_config = self.config.get("alist", {})
+            self.permissions = alist_config.get("permissions", {})
             self.open_groups = self.permissions.get("open_groups", [])
             # restricted_groups 可能是字符串（JSON格式）或字典
             restricted_groups_raw = self.permissions.get("restricted_groups", "{}")
@@ -126,10 +128,6 @@ class BiliDownloader(star.Star):
                     self.restricted_groups = {}
             else:
                 self.restricted_groups = restricted_groups_raw or {}
-            # 重新加载权限配置
-            self.permissions = self.config.get("permissions", {})
-            self.open_groups = self.permissions.get("open_groups", [])
-            self.restricted_groups = self.permissions.get("restricted_groups", {})
 
     def _update_config_values(self):
         """更新配置值到实例变量"""
@@ -1059,6 +1057,9 @@ class BiliDownloader(star.Star):
         group_id_str = str(group_id).strip()
         sender_id_str = str(sender_id).strip()
         
+        # 调试日志
+        logger.debug(f"权限检查: 群组ID={group_id_str}, 用户ID={sender_id_str}, 开放群组列表={self.open_groups}, 受限群组={self.restricted_groups}")
+        
         # 检查是否在开放群组列表中
         if group_id_str in self.open_groups:
             # 检查是否在受限群组配置中（受限群组的优先级更高）
@@ -1100,7 +1101,19 @@ class BiliDownloader(star.Star):
             return
         
         if not url:
-            yield event.plain_result("请提供视频URL\n用法: /bili <视频URL>")
+            help_msg = """📚 B站视频下载器
+
+用法: /bili <视频URL>
+
+示例:
+/bili https://www.bilibili.com/video/BV1qt4y1X7TW
+/bili BV1qt4y1X7TW
+
+💡 提示:
+- 支持B站视频链接和BV号
+- 如果视频有多个分P，会提示选择下载
+- 使用 /bili-help 查看完整帮助"""
+            yield event.plain_result(help_msg)
             return
         
         # 验证 URL
