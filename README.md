@@ -9,6 +9,9 @@
 - ⚙️ 可配置的下载选项
 - 📁 自定义下载路径
 - 🎯 支持选择清晰度、分P等高级选项
+- 🔗 自动生成OpenList下载链接（支持公开目录+密码）
+- 🔗 支持短链服务集成（自动转换长链接为短链）
+- 🔐 灵活的权限控制（支持群级和用户级权限管理）
 
 ## 安装要求
 
@@ -116,7 +119,9 @@ Cookie支持多种格式，程序会自动识别：
 
 ## 配置说明
 
-配置文件位于 `data/config/bilidownloader_config.json`
+配置文件位于 `data/config/bilidownloader_config.json`，也可以通过WebUI进行配置。
+
+### 基础配置
 
 ```json
 {
@@ -146,6 +151,78 @@ Cookie支持多种格式，程序会自动识别：
   
   使用 `/bili-naming` 命令查看所有可用参数。
 
+### OpenList 链接生成配置
+
+下载完成后自动生成OpenList下载链接（可选）：
+
+```json
+{
+  "alist": {
+    "enabled": true,
+    "base_url": "http://your-openlist.com:5244",
+    "password": "your-folder-password",
+    "alist_storage_path": "/bilibili"
+  }
+}
+```
+
+- `enabled`: 是否启用OpenList链接生成
+- `base_url`: OpenList访问地址
+- `password`: 文件夹密码（公开目录+密码场景，无需token）
+- `alist_storage_path`: 文件在OpenList中的存储路径
+
+### 短链服务配置
+
+支持将生成的链接转换为短链（可选）：
+
+```json
+{
+  "alist": {
+    "shortener": {
+      "enabled": true,
+      "api_url": "https://shortlinks.sube.top/api/shorten",
+      "method": "POST",
+      "data_key": "url",
+      "api_key": "your-api-key",
+      "auth_method": "header",
+      "auth_header": "X-API-Key"
+    }
+  }
+}
+```
+
+支持的开源短链服务：
+- [ShortLinks](https://github.com/Sube3494/shortlinks) - FastAPI短链服务
+- [YOURLS](https://yourls.org/) - PHP短链服务
+- [Polr](https://github.com/cydrobolt/polr) - PHP短链服务
+- [Kutt](https://github.com/thedevs-network/kutt) - Node.js短链服务
+- [Shlink](https://shlink.io/) - PHP短链服务
+
+### 权限控制配置
+
+支持灵活的权限管理，可以设置哪些群或用户可以使用下载功能：
+
+```json
+{
+  "alist": {
+    "permissions": {
+      "open_groups": ["123456789", "987654321"],
+      "restricted_groups": {
+        "111222333": ["user1", "user2"],
+        "444555666": ["user3"]
+      }
+    }
+  }
+}
+```
+
+- `open_groups`: 开放群组列表（群内所有人可用），QQ平台为QQ群号列表
+- `restricted_groups`: 受限群组配置（群内部分人可用）
+  - 键名：群号（QQ平台为QQ群号）
+  - 值：该群内允许使用的QQ号列表
+
+使用 `/sid` 命令可以获取群号和QQ号。
+
 ## 命令列表
 
 ### 下载相关
@@ -167,12 +244,38 @@ Cookie支持多种格式，程序会自动识别：
 
 💡 提示：使用 `/bili-help` 可以查看所有命令的详细说明
 
+## 高级功能
+
+### OpenList 链接生成
+
+下载完成后，如果启用了OpenList配置，插件会自动：
+1. 扫描下载目录，匹配已下载的视频文件
+2. 根据配置的存储路径，构建文件在OpenList中的路径
+3. 调用OpenList API获取文件直链
+4. 如果配置了短链服务，自动转换为短链
+5. 在下载完成消息中显示下载链接
+
+### 权限控制
+
+插件支持两种权限模式：
+
+1. **开放群组**：群号在 `open_groups` 列表中，该群所有成员都可以使用
+2. **受限群组**：群号在 `restricted_groups` 中，只有配置的用户可以使用
+
+如果两个列表都为空，默认允许所有人使用（向后兼容）。
+
+### 短链转换
+
+支持多种短链服务，下载完成后自动将OpenList链接转换为短链，方便分享。
+
 ## 注意事项
 
 1. 首次使用前请确保已安装BBDown
 2. 下载需要登录的视频时，请先设置Cookie
 3. Cookie会保存在配置文件中，请注意安全
 4. 下载大文件可能需要较长时间，请耐心等待
+5. OpenList链接生成需要文件已完全下载完成
+6. 权限配置中的群号和QQ号可通过 `/sid` 命令获取
 
 ## 相关链接
 
