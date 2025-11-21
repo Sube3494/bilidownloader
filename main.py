@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 from typing import Optional
 
 import aiohttp
@@ -316,7 +317,13 @@ class BiliDownloader(star.Star):
             cmd.extend(["--multi-file-pattern", "<videoTitle>/[P<pageNumberWithZero>]<pageTitle>[<dfn>]"])
         
         # 添加下载路径（BBDown使用--work-dir参数）
-        cmd.extend(["--work-dir", current_download_path])
+        # 确保使用绝对路径，避免在不同平台下的路径解析问题
+        abs_download_path = os.path.abspath(current_download_path)
+        # 确保目录存在
+        os.makedirs(abs_download_path, exist_ok=True)
+        cmd.extend(["--work-dir", abs_download_path])
+        
+        logger.debug(f"BBDown下载路径: {abs_download_path}")
         
         return cmd
 
@@ -618,11 +625,15 @@ class BiliDownloader(star.Star):
                                 item_clean = item.replace(" ", "").replace("-", "").replace("_", "")
                                 
                                 # 如果有关键词，检查文件名是否包含关键词
+                                # 如果没有关键词（可能是BBDown输出解析失败），则接受所有视频文件
                                 if match_keywords:
                                     matched = any(keyword.lower() in item_clean.lower() for keyword in match_keywords if keyword)
                                     if not matched:
                                         logger.debug(f"文件名不匹配，跳过: {item}")
                                         continue
+                                else:
+                                    # 没有匹配关键词时，记录信息（可能是输出解析失败，但文件已下载）
+                                    logger.info(f"没有匹配关键词，接受所有视频文件: {item}")
                                 
                                 logger.info(f"找到匹配的文件: {item}")
                                 
@@ -755,12 +766,32 @@ class BiliDownloader(star.Star):
     async def _run_bbdown(self, cmd: list) -> tuple[int, str, str]:
         """运行 BBDown 命令"""
         try:
+            # 检查BBDown是否存在
+            bbdown_path = cmd[0] if cmd else "BBDown"
+            if bbdown_path == "BBDown" or not os.path.isabs(bbdown_path):
+                # 如果是相对路径或命令名，检查是否在PATH中
+                import shutil
+                if not shutil.which(bbdown_path):
+                    error_msg = (
+                        f"找不到BBDown可执行文件: {bbdown_path}\n"
+                        f"请确保BBDown已安装并在PATH中，或使用 /bili-set bbdown_path <完整路径> 设置BBDown的完整路径\n"
+                        f"例如: /bili-set bbdown_path /usr/local/bin/BBDown"
+                    )
+                    logger.error(error_msg)
+                    return -1, "", error_msg
+            
             logger.info(f"执行命令: {' '.join(shlex.quote(str(arg)) for arg in cmd)}")
+            current_work_dir = os.getcwd()
+            logger.debug(f"当前工作目录: {current_work_dir}")
+            logger.debug(f"平台: {os.name}")  # 'nt' for Windows, 'posix' for Linux/Mac
+            
+            # 在Linux上，确保使用绝对路径，避免路径解析问题
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=os.getcwd()
+                cwd=current_work_dir,
+                env=os.environ.copy()  # 显式传递环境变量，确保PATH等环境变量正确
             )
             stdout, stderr = await process.communicate()
             return_code = process.returncode or -1
@@ -769,7 +800,22 @@ class BiliDownloader(star.Star):
             stdout_str = self._decode_output(stdout) if stdout else ""
             stderr_str = self._decode_output(stderr) if stderr else ""
             
+            # 记录输出用于调试（限制长度）
+            if stdout_str:
+                logger.debug(f"BBDown stdout前1000字符: {stdout_str[:1000]}")
+            if stderr_str:
+                logger.debug(f"BBDown stderr前1000字符: {stderr_str[:1000]}")
+            logger.debug(f"BBDown返回码: {return_code}")
+            
             return return_code, stdout_str, stderr_str
+        except FileNotFoundError as e:
+            error_msg = (
+                f"找不到BBDown可执行文件: {cmd[0] if cmd else 'BBDown'}\n"
+                f"请确保BBDown已安装并在PATH中，或使用 /bili-set bbdown_path <完整路径> 设置BBDown的完整路径\n"
+                f"例如: /bili-set bbdown_path /usr/local/bin/BBDown"
+            )
+            logger.error(error_msg)
+            return -1, "", error_msg
         except Exception as e:
             logger.error(f"执行 BBDown 命令失败: {e}")
             return -1, "", str(e)
@@ -832,6 +878,8 @@ class BiliDownloader(star.Star):
         bv_match = re.search(r'BV[a-zA-Z0-9]+', url)
         if bv_match:
             return bv_match.group(0)
+        # 如果URL中没有BV号（可能是动态链接如 t.bilibili.com），返回None
+        # BBDown应该能处理这种链接，所以这里返回None是可以的
         return None
     
     async def _get_video_info_from_api(self, url: str) -> tuple[bool, str, list]:
@@ -844,7 +892,9 @@ class BiliDownloader(star.Star):
             # 提取BV号
             bv = self._extract_bv_from_url(url)
             if not bv:
-                logger.error("无法从URL中提取BV号")
+                # 如果URL中没有BV号（可能是动态链接如 t.bilibili.com），
+                # 直接返回失败，让BBDown来处理（BBDown支持这种链接）
+                logger.info(f"URL中未包含BV号（可能是动态链接），将直接使用BBDown下载: {url}")
                 return False, "", []
             
             # B站API：获取视频信息
@@ -1098,6 +1148,12 @@ class BiliDownloader(star.Star):
         output_combined = (stdout + "\n" + stderr).lower()
         output_original = stdout + "\n" + stderr
         
+        # 记录BBDown输出用于调试
+        logger.debug(f"BBDown返回码: {return_code}")
+        logger.debug(f"BBDown stdout前500字符: {stdout[:500]}")
+        if stderr:
+            logger.debug(f"BBDown stderr前500字符: {stderr[:500]}")
+        
         # 检查是否有明显的错误信息（更严格的错误判断，只检查真正的错误）
         error_keywords = [
             "unrecognized command", "unrecognized argument", 
@@ -1125,17 +1181,29 @@ class BiliDownloader(star.Star):
         # 检查是否有BBDown版本信息（说明程序至少启动了）
         has_bbdown_info = "bbdown version" in output_combined or "bilibili downloader" in output_combined
         
+        # 检查是否有实际下载完成的标志（关键：检查是否有文件保存路径）
+        has_download_complete = any(keyword in output_original.lower() for keyword in [
+            "保存至", "saved to", "文件已保存", "下载完成", "download completed",
+            "文件:", "file:", ".mp4", ".flv", ".m4s", ".mkv"
+        ])
+        
         # 判断是否成功：
-        # 1. 返回码为0（标准成功）
+        # 1. 返回码为0（标准成功）- 这是最可靠的判断，如果返回0通常表示成功
         # 2. 有成功标志且没有错误（有视频信息且没有明显错误）
         # 3. 有BBDown版本信息且有视频信息，且没有错误（说明程序运行并获取了信息）
         # 4. 有文件路径信息且没有错误
+        # 5. 有下载完成标志（关键：必须有实际文件保存的迹象）
+        # 注意：返回码为0是最可靠的判断，即使输出中没有特定关键词，也应该认为成功
         is_success = (
-            return_code == 0 or 
-            (has_success_indicator and not has_error_keyword) or
+            return_code == 0 or  # 返回码为0是最可靠的判断
+            (has_success_indicator and has_download_complete and not has_error_keyword) or
             (has_file_path and not has_error_keyword) or
-            (has_bbdown_info and has_success_indicator and not has_error_keyword)
+            (has_bbdown_info and has_success_indicator and has_download_complete and not has_error_keyword)
         )
+        
+        # 如果没有下载完成的标志但返回码为0，记录信息（不是警告，因为返回码0通常表示成功）
+        if not has_download_complete and return_code == 0:
+            logger.info("BBDown返回码为0，但输出中未检测到文件保存关键词，将检查下载目录中的实际文件")
         
         if is_success:
             # 提取下载信息
@@ -1293,6 +1361,16 @@ class BiliDownloader(star.Star):
             if return_code != 0:
                 error_msg += f" (返回码: {return_code})"
             error_msg += "\n\n"
+            
+            # 检查是否是BBDown未找到的错误
+            if stderr and ("No such file or directory" in stderr or "找不到" in stderr or "command not found" in stderr.lower()):
+                error_msg += "⚠️ BBDown未找到或无法执行\n\n"
+                error_msg += "解决方案：\n"
+                error_msg += "1. 确保BBDown已正确安装\n"
+                error_msg += "2. 如果BBDown不在PATH中，请使用以下命令设置完整路径：\n"
+                error_msg += "   /bili-set bbdown_path <BBDown的完整路径>\n"
+                error_msg += "   例如: /bili-set bbdown_path /usr/local/bin/BBDown\n"
+                error_msg += "   或: /bili-set bbdown_path /home/user/BBDown/BBDown\n\n"
             
             # 提取错误信息
             if stderr:
