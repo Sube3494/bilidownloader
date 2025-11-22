@@ -5,6 +5,7 @@ import re
 import shlex
 import shutil
 from typing import Optional
+from urllib.parse import urljoin
 
 import aiohttp
 
@@ -882,6 +883,9 @@ class BiliDownloader(star.Star):
 /bili <视频URL>
   下载B站视频
   示例: /bili https://www.bilibili.com/video/BV1qt4y1X7TW
+  示例: /bili https://b23.tv/uKe83H7
+  示例: /bili BV1qt4y1X7TW
+  支持完整链接、短链（b23.tv）和BV号
   别名: /bilibili, /b站, /B站
 
 【配置相关】
@@ -925,6 +929,71 @@ class BiliDownloader(star.Star):
 """
         yield event.plain_result(help_msg)
 
+    async def _resolve_b23_shortlink(self, url: str) -> Optional[str]:
+        """解析B站短链（b23.tv）获取真实URL
+        
+        Args:
+            url: B站短链URL（如 https://b23.tv/xxx）
+            
+        Returns:
+            真实URL，如果解析失败返回None
+        """
+        if not url or "b23.tv" not in url:
+            return None
+        
+        # 确保URL格式正确
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "https://" + url
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                # 先尝试不跟随重定向，获取Location头
+                async with session.get(
+                    url,
+                    allow_redirects=False,
+                    timeout=aiohttp.ClientTimeout(total=10, connect=5),
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Referer": "https://www.bilibili.com/"
+                    }
+                ) as resp:
+                    # 检查重定向
+                    if resp.status in (301, 302, 303, 307, 308):
+                        location = resp.headers.get("Location")
+                        if location:
+                            # 处理相对路径
+                            if location.startswith("/"):
+                                location = urljoin(url, location)
+                            logger.debug(f"B站短链解析成功（重定向）: {url} -> {location}")
+                            return location
+                
+                # 如果没有重定向头，尝试跟随重定向获取最终URL
+                async with session.get(
+                    url,
+                    allow_redirects=True,
+                    timeout=aiohttp.ClientTimeout(total=10, connect=5),
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Referer": "https://www.bilibili.com/"
+                    }
+                ) as resp:
+                    if resp.status == 200:
+                        final_url = str(resp.url)
+                        # 确保最终URL是B站链接
+                        if "bilibili.com" in final_url:
+                            logger.debug(f"B站短链解析成功（跟随重定向）: {url} -> {final_url}")
+                            return final_url
+                        else:
+                            logger.warning(f"B站短链解析结果不是B站链接: {url} -> {final_url}")
+        except asyncio.TimeoutError:
+            logger.warning(f"B站短链解析超时: {url}")
+        except aiohttp.ClientError as e:
+            logger.warning(f"B站短链解析网络错误: {url}, 错误: {e}")
+        except Exception as e:
+            logger.warning(f"B站短链解析失败: {url}, 错误: {e}")
+        
+        return None
+    
     def _extract_bv_from_url(self, url: str) -> Optional[str]:
         """从URL中提取BV号"""
         # 匹配BV号格式
@@ -1107,17 +1176,29 @@ class BiliDownloader(star.Star):
 
 示例:
 /bili https://www.bilibili.com/video/BV1qt4y1X7TW
+/bili https://b23.tv/uKe83H7
 /bili BV1qt4y1X7TW
 
 💡 提示:
-- 支持B站视频链接和BV号
+- 支持B站视频链接、短链（b23.tv）和BV号
 - 如果视频有多个分P，会提示选择下载
 - 使用 /bili-help 查看完整帮助"""
             yield event.plain_result(help_msg)
             return
         
+        # 如果是B站短链（b23.tv），先解析获取真实URL
+        if "b23.tv" in url:
+            yield event.plain_result("正在解析短链...")
+            resolved_url = await self._resolve_b23_shortlink(url)
+            if resolved_url:
+                logger.info(f"短链解析成功: {url} -> {resolved_url}")
+                url = resolved_url
+            else:
+                yield event.plain_result("❌ 无法解析B站短链，请使用完整链接或BV号")
+                return
+        
         # 验证 URL
-        if "bilibili.com" not in url and "BV" not in url:
+        if "bilibili.com" not in url and "BV" not in url and not url.startswith("BV"):
             yield event.plain_result("无效的B站视频URL")
             return
         
@@ -1464,7 +1545,21 @@ class BiliDownloader(star.Star):
                 error_msg += f" (返回码: {return_code})"
             error_msg += "\n\n"
             
-            # 检查是否是BBDown未找到的错误
+            # 合并输出用于错误分析
+            all_output = (stdout + "\n" + stderr).lower() if stderr else stdout.lower()
+            all_output_original = stdout + "\n" + stderr if stderr else stdout
+            
+            # 检查是否有视频信息（用于判断是否成功获取到视频）
+            # 更严格的判断：至少要有2个关键信息才认为获取到了视频
+            video_info_keywords = ["aid:", "cid:", "视频标题:", "title:", "up主", "owner", "bvid:"]
+            video_info_count = sum(1 for keyword in video_info_keywords if keyword in all_output)
+            has_video_info = video_info_count >= 2
+            
+            # 添加调试日志
+            logger.debug(f"错误检测: return_code={return_code}, video_info_count={video_info_count}, has_video_info={has_video_info}")
+            logger.debug(f"输出前200字符: {all_output[:200]}")
+            
+            # 检查是否是BBDown未找到的错误（最高优先级）
             if stderr and ("No such file or directory" in stderr or "找不到" in stderr or "command not found" in stderr.lower()):
                 error_msg += "⚠️ BBDown未找到或无法执行\n\n"
                 error_msg += "解决方案：\n"
@@ -1473,24 +1568,46 @@ class BiliDownloader(star.Star):
                 error_msg += "   /bili-set bbdown_path <BBDown的完整路径>\n"
                 error_msg += "   例如: /bili-set bbdown_path /usr/local/bin/BBDown\n"
                 error_msg += "   或: /bili-set bbdown_path /home/user/BBDown/BBDown\n\n"
-            
-            # 提取错误信息
-            if stderr:
-                error_lines = stderr.split("\n")[:5]  # 最多5行
-                error_msg += "错误信息：\n"
-                for line in error_lines:
-                    if line.strip():
-                        error_msg += f"  {line.strip()}\n"
-            elif stdout:
-                # 如果没有stderr，从stdout中查找错误
-                error_lines = stdout.split("\n")[:5]
-                error_msg += "输出信息：\n"
-                for line in error_lines:
-                    if line.strip():
-                        error_msg += f"  {line.strip()}\n"
+            # 优先检查：如果返回码非0且没有视频信息，很可能是视频不存在（高优先级）
+            elif return_code != 0 and not has_video_info:
+                # 直接判断为视频不存在，简洁明了
+                error_msg += "⚠️ 视频不存在或已被删除\n\n"
+                error_msg += "💡 建议：\n"
+                error_msg += "- 在浏览器中打开链接确认视频是否可访问\n"
+                error_msg += "- 如果视频确实存在，可能需要登录，请使用 /bili-test-cookie 检查Cookie状态\n\n"
+            # 检查输出中是否有明确的"视频不存在"相关错误
+            elif any(keyword in all_output_original for keyword in [
+                "视频不存在", "视频已删除", "视频已下架", "视频不可用", "视频无效",
+                "not found", "不存在", "无法访问", "访问失败", "获取失败",
+                "视频信息获取失败", "获取视频信息失败", "解析失败", "解析错误",
+                "invalid video", "invalid url", "无效的视频", "无效的链接"
+            ]):
+                error_msg += "⚠️ 视频不存在或已被删除\n\n"
+                error_msg += "💡 建议：\n"
+                error_msg += "- 在浏览器中打开链接确认视频是否可访问\n"
+                error_msg += "- 如果视频确实存在，可能需要登录，请使用 /bili-test-cookie 检查Cookie状态\n\n"
+            # 检查是否是Cookie相关的错误（较低优先级）
+            # 注意：只有当有完整视频信息（至少2个关键字段）但Cookie有明确问题时，才判断为Cookie错误
+            # "检测账号登录"只是BBDown的常规输出，不代表Cookie有问题
+            # 只有明确的错误信息（如"登录失败""cookie失效"）才判断为Cookie问题
+            elif has_video_info and any(keyword in all_output for keyword in [
+                "cookie失效", "cookie无效", "登录失败", "登录错误", "未登录",
+                "需要登录", "请先登录", "认证失败", "unauthorized", "未授权",
+                "账号异常", "账户异常", "登录状态失效"
+            ]):
+                error_msg += "⚠️ Cookie失效或需要登录\n\n"
+                error_msg += "💡 建议：\n"
+                error_msg += "- 使用 /bili-test-cookie 检查Cookie是否有效\n"
+                error_msg += "- 如果Cookie失效，请使用 /bili-cookie 重新设置\n\n"
+            # 其他未明确分类的错误（兜底处理）
             else:
-                error_msg += "未获取到错误信息，请检查BBDown是否正确安装"
+                error_msg += "⚠️ 下载失败\n\n"
+                error_msg += "💡 建议：\n"
+                error_msg += "- 在浏览器中打开链接确认视频是否可访问\n"
+                error_msg += "- 使用 /bili-test-cookie 检查Cookie状态\n"
+                error_msg += "- 如果问题持续，请稍后重试\n\n"
             
+            # 不再显示BBDown的原始输出信息，只显示用户友好的错误提示
             yield event.plain_result(error_msg.strip())
 
     async def _test_cookie(self, cookie: str) -> tuple[bool, str, dict]:
