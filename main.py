@@ -719,7 +719,7 @@ class BiliDownloader(star.Star):
             # 使用密码方式获取真实链接
             try:
                 tasks = [self._get_alist_download_link(base_url, f["alist_path"], password, f["path"]) for f in files]
-                links = await asyncio.gather(*tasks)
+                links = await asyncio.gather(*tasks, return_exceptions=False)
             except Exception as e:
                 logger.error(f"获取OpenList链接失败: {e}")
                 import traceback
@@ -947,8 +947,12 @@ class BiliDownloader(star.Star):
         if not text:
             return None
         
+        # 先去除首尾空白
+        text = text.strip()
+        
         # 1. 尝试匹配完整的HTTP/HTTPS链接（包括b23.tv短链和bilibili.com）
-        url_pattern = r'https?://(?:b23\.tv|(?:www\.)?bilibili\.com)/[^\s\]】）)>]+'
+        # 匹配URL中常见的字符：字母、数字、-、_、/、?、=、&、%、#、.等
+        url_pattern = r'https?://(?:b23\.tv|(?:www\.)?bilibili\.com)/[a-zA-Z0-9_/?=&%#.-]+'
         url_match = re.search(url_pattern, text)
         if url_match:
             return url_match.group(0)
@@ -959,8 +963,14 @@ class BiliDownloader(star.Star):
         if bv_match:
             return bv_match.group(0)
         
-        # 3. 如果都没匹配到，返回原文本（可能本身就是URL或BV号）
-        return text.strip()
+        # 3. 如果都没匹配到，检查是否是纯URL或BV号（没有其他字符）
+        # 如果包含中文或特殊字符，返回None而不是原文本
+        if len(text) < 100 and not any('\u4e00' <= c <= '\u9fff' for c in text):
+            # 可能是纯URL或BV号，返回原文本
+            return text
+        else:
+            # 包含中文或太长，肯定不是纯URL，返回None
+            return None
     
     async def _resolve_b23_shortlink(self, url: str) -> Optional[str]:
         """解析B站短链（b23.tv）获取真实URL
@@ -1185,7 +1195,7 @@ class BiliDownloader(star.Star):
         return False, None
     
     @filter.command("bili", alias={"bilibili", "b站", "B站"})
-    async def download_video(self, event: AstrMessageEvent, url: str = ""):
+    async def download_video(self, event: AstrMessageEvent):
         """下载B站视频
         
         用法: /bili <视频URL>
@@ -1201,6 +1211,24 @@ class BiliDownloader(star.Star):
             if error_msg:
                 yield event.plain_result(error_msg)
             return
+        
+        # 从完整消息中提取URL（去除命令前缀）
+        # 注意：event.message_str 已经去掉了斜杠，所以是 "bili xxx" 而不是 "/bili xxx"
+        message = event.message_str.strip()
+        
+        # 移除命令前缀（bili, bilibili, b站, B站）
+        url = ""
+        for prefix in ["bili ", "bilibili ", "b站 ", "B站 "]:
+            if message.startswith(prefix):
+                url = message[len(prefix):].strip()
+                break
+        
+        # 如果没有匹配到带空格的前缀，检查是否只有命令本身
+        if not url:
+            for prefix in ["bili", "bilibili", "b站", "B站"]:
+                if message == prefix:
+                    url = ""
+                    break
         
         if not url:
             help_msg = """📚 B站视频下载器
@@ -1223,8 +1251,13 @@ class BiliDownloader(star.Star):
         
         # 从文本中提取URL（支持从移动端分享的内容中提取）
         extracted_url = self._extract_url_from_text(url)
-        if extracted_url:
-            logger.debug(f"从文本中提取URL: '{url}' -> '{extracted_url}'")
+        
+        if extracted_url is None:
+            # 提取失败，返回错误
+            yield event.plain_result("❌ 无法从输入中提取有效的B站视频链接\n\n请使用以下格式之一：\n- https://www.bilibili.com/video/BV...\n- https://b23.tv/...\n- BV号")
+            return
+        elif extracted_url != url:
+            logger.info(f"从文本中提取URL: {extracted_url}")
             url = extracted_url
         
         # 如果是B站短链（b23.tv），先解析获取真实URL
@@ -1595,10 +1628,6 @@ class BiliDownloader(star.Star):
             video_info_keywords = ["aid:", "cid:", "视频标题:", "title:", "up主", "owner", "bvid:"]
             video_info_count = sum(1 for keyword in video_info_keywords if keyword in all_output)
             has_video_info = video_info_count >= 2
-            
-            # 添加调试日志
-            logger.debug(f"错误检测: return_code={return_code}, video_info_count={video_info_count}, has_video_info={has_video_info}")
-            logger.debug(f"输出前200字符: {all_output[:200]}")
             
             # 检查是否是BBDown未找到的错误（最高优先级）
             if stderr and ("No such file or directory" in stderr or "找不到" in stderr or "command not found" in stderr.lower()):
