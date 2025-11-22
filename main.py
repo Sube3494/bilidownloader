@@ -885,7 +885,8 @@ class BiliDownloader(star.Star):
   示例: /bili https://www.bilibili.com/video/BV1qt4y1X7TW
   示例: /bili https://b23.tv/uKe83H7
   示例: /bili BV1qt4y1X7TW
-  支持完整链接、短链（b23.tv）和BV号
+  示例: /bili 【标题-哔哩哔哩】 https://b23.tv/xxx
+  支持完整链接、短链（b23.tv）、BV号和移动端分享格式
   别名: /bilibili, /b站, /B站
 
 【配置相关】
@@ -929,6 +930,38 @@ class BiliDownloader(star.Star):
 """
         yield event.plain_result(help_msg)
 
+    def _extract_url_from_text(self, text: str) -> Optional[str]:
+        """从文本中提取B站URL
+        
+        支持从以下格式提取：
+        - 【标题-哔哩哔哩】 https://b23.tv/xxx
+        - 直接的URL
+        - BV号
+        
+        Args:
+            text: 可能包含URL的文本
+            
+        Returns:
+            提取到的URL，如果没找到返回None
+        """
+        if not text:
+            return None
+        
+        # 1. 尝试匹配完整的HTTP/HTTPS链接（包括b23.tv短链和bilibili.com）
+        url_pattern = r'https?://(?:b23\.tv|(?:www\.)?bilibili\.com)/[^\s\]】）)>]+'
+        url_match = re.search(url_pattern, text)
+        if url_match:
+            return url_match.group(0)
+        
+        # 2. 尝试匹配BV号
+        bv_pattern = r'BV[a-zA-Z0-9]+'
+        bv_match = re.search(bv_pattern, text)
+        if bv_match:
+            return bv_match.group(0)
+        
+        # 3. 如果都没匹配到，返回原文本（可能本身就是URL或BV号）
+        return text.strip()
+    
     async def _resolve_b23_shortlink(self, url: str) -> Optional[str]:
         """解析B站短链（b23.tv）获取真实URL
         
@@ -1178,13 +1211,21 @@ class BiliDownloader(star.Star):
 /bili https://www.bilibili.com/video/BV1qt4y1X7TW
 /bili https://b23.tv/uKe83H7
 /bili BV1qt4y1X7TW
+/bili 【标题-哔哩哔哩】 https://b23.tv/xxx
 
 💡 提示:
 - 支持B站视频链接、短链（b23.tv）和BV号
+- 支持直接粘贴移动端分享的内容
 - 如果视频有多个分P，会提示选择下载
 - 使用 /bili-help 查看完整帮助"""
             yield event.plain_result(help_msg)
             return
+        
+        # 从文本中提取URL（支持从移动端分享的内容中提取）
+        extracted_url = self._extract_url_from_text(url)
+        if extracted_url:
+            logger.debug(f"从文本中提取URL: '{url}' -> '{extracted_url}'")
+            url = extracted_url
         
         # 如果是B站短链（b23.tv），先解析获取真实URL
         if "b23.tv" in url:
