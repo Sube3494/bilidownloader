@@ -1471,8 +1471,7 @@ class BiliDownloader(star.Star):
         
         if is_success:
             # 提取下载信息
-            result_msg = "✅ 下载完成！\n"
-            result_msg += "─" * 30 + "\n"
+            result_msg = "✅ 下载完成！\n\n"
             
             # 提取关键信息：视频标题和分P信息
             video_title = ""
@@ -1505,7 +1504,7 @@ class BiliDownloader(star.Star):
             
             # 构建结果消息（只显示标题和实际下载的分P列表）
             if video_title:
-                result_msg += f"📹 {video_title}\n"
+                result_msg += f"🎬 {video_title}\n"
             
             if page_info:
                 # 如果用户选择了特定分P，只显示选中的分P
@@ -1627,16 +1626,21 @@ class BiliDownloader(star.Star):
                 current_config, video_title, page_info, selected_pages_info, start_time=start_time
             )
             if alist_links:
-                result_msg += "─" * 30 + "\n"
-                result_msg += "📥 下载链接\n"
-                result_msg += "─" * 30 + "\n"
+                result_msg += "\n🔗 下载链接：\n"
                 for i, link_info in enumerate(alist_links, 1):
-                    # 如果只有一个链接，简化显示
+                    # 纯文本格式输出链接
                     if len(alist_links) == 1:
-                        result_msg += f"🔗 {link_info['url']}\n"
+                        result_msg += f"{link_info['url']}\n"
                     else:
-                        result_msg += f"【{i}】{link_info['name']}\n"
-                        result_msg += f"   🔗 {link_info['url']}\n"
+                        result_msg += f"P{i}: {link_info['url']}\n"
+                
+                # 添加有效期提示
+                expiry_unit = current_config.get("alist", {}).get("shortener", {}).get("expiry_unit", "分钟")
+                expiry_value = current_config.get("alist", {}).get("shortener", {}).get("expiry_value", 30)
+                if expiry_unit in ["never", "永久有效"]:
+                    result_msg += "\n✨ 永久有效"
+                else:
+                    result_msg += f"\n✨ 有效期：{expiry_value} {expiry_unit}"
             else:
                 logger.warning("未生成OpenList链接，可能原因：文件未找到或文件名不匹配")
             
