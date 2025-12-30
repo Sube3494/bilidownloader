@@ -4,7 +4,7 @@ import os
 import re
 import shlex
 import shutil
-from typing import Optional
+from typing import Optional, Any, Dict
 from urllib.parse import urljoin
 
 import aiohttp
@@ -18,6 +18,14 @@ from astrbot.core.utils.session_waiter import SessionController, session_waiter
 
 class BiliDownloader(star.Star):
     """B站视频下载插件"""
+    
+    original_config: Optional[Any] = None
+    config: Dict[str, Any]
+    bbdown_path: str
+    download_path: str
+    permissions: Dict[str, Any]
+    open_groups: list
+    restricted_groups: Dict[str, Any]
     
     # 中文参数名到英文参数名的映射
     PARAM_MAPPING = {
@@ -57,6 +65,7 @@ class BiliDownloader(star.Star):
         super().__init__(context, config)
         
         # 获取配置：优先使用传入的config，否则从metadata获取
+        self.original_config = config # 记录原始对象用于可能的迁徙保存
         if config:
             if isinstance(config, AstrBotConfig):
                 self.config = dict(config)
@@ -134,6 +143,33 @@ class BiliDownloader(star.Star):
         """更新配置值到实例变量"""
         self.bbdown_path = self.config.get("bbdown_path", "BBDown")
         self.download_path = self.config.get("download_path", "./downloads")
+        
+        # 配置自动迁移：将旧版英文过期单位转换为中文，修复 UI 显示问题
+        alist_config = self.config.get("alist", {})
+        shortener_config = alist_config.get("shortener", {})
+        if shortener_config:
+            expiry_unit = shortener_config.get("expiry_unit")
+            migration_map = {
+                "minutes": "分钟",
+                "hours": "小时",
+                "days": "天",
+                "never": "永久有效"
+            }
+            if expiry_unit in migration_map:
+                new_unit = migration_map[expiry_unit]
+                shortener_config["expiry_unit"] = new_unit
+                logger.info(f"短链配置自动迁徙: {expiry_unit} -> {new_unit}")
+                
+                # 如果是 AstrBotConfig 对象，尝试保存更新
+                if hasattr(self, "original_config") and isinstance(self.original_config, AstrBotConfig):
+                    try:
+                        # 更新原始对象的对应部分
+                        if "alist" in self.original_config:
+                            self.original_config["alist"]["shortener"]["expiry_unit"] = new_unit
+                            self.original_config.save_config()
+                            logger.debug("已将迁徙后的配置保存至文件")
+                    except Exception as e:
+                        logger.debug(f"尝试保存迁徙配置失败: {e}")
 
     def _parse_cookie(self, cookie_input: str) -> str:
         """解析不同格式的 cookie
@@ -385,113 +421,77 @@ class BiliDownloader(star.Star):
             # 构建请求头
             headers = {"Content-Type": "application/json"}
             
-            # 获取API密钥和认证方式
-            api_key = shortener_config.get("api_key", "")
-            auth_method = shortener_config.get("auth_method", "header")  # header 或 query
-            auth_header = shortener_config.get("auth_header", "X-API-Key")
+            api_url = shortener_config.get("api_url", "").strip()
+            api_key = shortener_config.get("api_key", "").strip()
             
-            # 根据认证方式设置认证信息
-            params = {}
+            if not api_url:
+                logger.warning("未配置短链服务API地址")
+                return None
+            
+            # 地址自愈：如果不是以 /api/shorten 结尾，则自动补全
+            if not api_url.endswith("/api/shorten") and not api_url.endswith("/api/shorten/"):
+                api_url = api_url.rstrip("/") + "/api/shorten"
+                logger.debug(f"自动补全API地址: {api_url}")
+
             if api_key:
-                if auth_method.lower() == "query":
-                    # Query参数方式：添加到URL参数中
-                    params["api_key"] = api_key
-                    logger.debug(f"使用Query参数认证: api_key={api_key[:10]}...")
-                else:
-                    # Header方式（默认）：添加到请求头
-                    headers[auth_header] = api_key
-                    logger.debug(f"使用Header认证: {auth_header}={api_key[:10]}...")
+                headers["X-API-Key"] = api_key
             
-            method = shortener_config.get("method", "POST").upper()
-            logger.debug(f"请求方法: {method}")
-            
-            # 增加超时时间，避免Linux上网络延迟导致失败
-            # total: 总超时时间（包括连接、发送、接收）
-            # connect: 连接超时时间
-            # 如果网络较慢，可以适当增加这些值
+            # 增加超时时间，避免网络延迟导致失败
             timeout = aiohttp.ClientTimeout(total=15, connect=10)
             
-            if method == "POST":
-                # POST方式：请求体包含原始URL
-                data_key = shortener_config.get("data_key", "url")
-                data = {data_key: url}
-                logger.debug(f"POST请求体: {data_key}={url[:100]}...")
-                
-                async with aiohttp.ClientSession() as session:
-                    try:
-                        async with session.post(api_url, json=data, headers=headers, params=params, timeout=timeout) as resp:
-                            response_text = await resp.text()
-                            logger.debug(f"短链API响应状态: {resp.status}, 响应长度: {len(response_text)}")
-                            
-                            if resp.status == 200:
-                                try:
-                                    result = await resp.json()
-                                    logger.debug(f"短链API响应: {result}")
-                                    short_url = self._extract_short_url(result)
-                                    if short_url:
-                                        logger.info(f"短链转换成功: {url[:50]}... -> {short_url}")
-                                        return short_url
-                                    else:
-                                        logger.warning(f"短链API响应中未找到短链字段，响应内容: {result}")
-                                except Exception as e:
-                                    logger.warning(f"解析短链API响应失败: {e}, 响应文本: {response_text[:500]}")
-                                    import traceback
-                                    logger.debug(traceback.format_exc())
-                            else:
-                                logger.warning(f"短链API返回错误: HTTP {resp.status}, 响应: {response_text[:500]}")
-                    except asyncio.TimeoutError:
-                        logger.warning(f"短链API请求超时: {api_url}")
-                    except aiohttp.ClientError as e:
-                        logger.warning(f"短链API请求失败: {type(e).__name__}: {e}")
-                        import traceback
-                        logger.debug(traceback.format_exc())
-            else:
-                # GET方式：URL作为参数
-                params_key = shortener_config.get("params_key", "url")
-                params[params_key] = url
-                logger.debug(f"GET请求参数: {params_key}={url[:100]}...")
-                
-                async with aiohttp.ClientSession() as session:
-                    try:
-                        async with session.get(api_url, params=params, headers=headers, timeout=timeout) as resp:
-                            response_text = await resp.text()
-                            logger.debug(f"短链API响应状态: {resp.status}, 响应长度: {len(response_text)}")
-                            
-                            if resp.status == 200:
-                                try:
-                                    result = await resp.json()
-                                    logger.debug(f"短链API响应: {result}")
-                                    short_url = self._extract_short_url(result)
-                                    if short_url:
-                                        logger.info(f"短链转换成功: {url[:50]}... -> {short_url}")
-                                        return short_url
-                                    else:
-                                        logger.warning(f"短链API响应中未找到短链字段，响应内容: {result}")
-                                except Exception as e:
-                                    logger.warning(f"解析短链API响应失败: {e}, 响应文本: {response_text[:500]}")
-                                    import traceback
-                                    logger.debug(traceback.format_exc())
-                            else:
-                                logger.warning(f"短链API返回错误: HTTP {resp.status}, 响应: {response_text[:500]}")
-                    except aiohttp.ServerTimeoutError as e:
-                        logger.warning(f"短链API服务器超时（总超时15秒）: {api_url}, 错误: {e}")
-                        logger.warning(f"可能原因：网络延迟、服务器响应慢或网络连接问题")
-                    except asyncio.TimeoutError:
-                        logger.warning(f"短链API请求超时（总超时15秒）: {api_url}")
-                        logger.warning(f"可能原因：网络延迟、服务器响应慢或网络连接问题")
-                    except aiohttp.ClientConnectorError as e:
-                        logger.warning(f"短链API连接失败: {api_url}, 错误: {e}")
-                        logger.warning(f"可能原因：网络不通、DNS解析失败或服务器不可达")
-                    except aiohttp.ClientError as e:
-                        logger.warning(f"短链API请求失败: {type(e).__name__}: {e}")
-                        import traceback
-                        logger.debug(traceback.format_exc())
+            # ShortLinks 服务统一使用 POST 方式
+            data: Dict[str, Any] = {"url": url}
+            
+            # 添加过期时间参数（如果配置了且非永久有效）
+            expiry_value = shortener_config.get("expiry_value")
+            expiry_unit = shortener_config.get("expiry_unit", "分钟")
+            
+            if expiry_unit not in ["never", "永久有效"] and expiry_value is not None:
+                try:
+                    val = int(expiry_value)
+                    if expiry_unit in ["minutes", "分钟"]:
+                        data["expires_in_minutes"] = val
+                    elif expiry_unit in ["hours", "小时"]:
+                        data["expires_in_hours"] = val
+                    elif expiry_unit in ["days", "天"]:
+                        data["expires_in_days"] = val
+                    logger.debug(f"添加过期参数: {expiry_unit}={val}")
+                except (ValueError, TypeError):
+                    logger.warning(f"无效的过期时间数值: {expiry_value}")
+            
+            logger.debug(f"发送短链请求: {api_url}, Payload: {list(data.keys())}")
+            
+            async with aiohttp.ClientSession() as session:
+                try:
+                    async with session.post(api_url, json=data, headers=headers, timeout=timeout) as resp:
+                        response_text = await resp.text()
+                        logger.debug(f"短链API响应状态: {resp.status}")
+                        
+                        if resp.status == 200:
+                            try:
+                                result = await resp.json()
+                                short_url = self._extract_short_url(result)
+                                if short_url:
+                                    logger.info(f"短链转换成功: {url[:30]}... -> {short_url}")
+                                    return short_url
+                                else:
+                                    logger.warning(f"短链API响应中未找到短链字段: {result}")
+                            except Exception as e:
+                                logger.warning(f"解析短链API响应失败: {e}, Content: {response_text[:100]}")
+                        else:
+                            logger.warning(f"短链API请求失败: HTTP {resp.status}, Body: {response_text[:100]}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"短链API请求超时: {api_url}")
+                except Exception as e:
+                    logger.warning(f"请求短链API发生异常: {type(e).__name__}: {e}")
+            return None
         except Exception as e:
-            logger.warning(f"短链转换失败: {type(e).__name__}: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
-        
-        return None
+            logger.error(f"短链转换流程出错: {e}")
+            return None
+
+
+
+
     
     async def _get_alist_download_link(self, base_url: str, file_path: str, password: str, local_file_path: Optional[str] = None) -> Optional[str]:
         """通过OpenList API获取文件的真实下载链接（使用密码方式）
@@ -576,7 +576,7 @@ class BiliDownloader(star.Star):
             logger.error(f"获取OpenList下载链接失败: {e}")
             return None
     
-    async def _generate_alist_links_async(self, config: dict, video_title: str, page_info: list, selected_pages: Optional[str] = None) -> list:
+    async def _generate_alist_links_async(self, config: dict, video_title: str, page_info: list, selected_pages: Optional[str] = None, start_time: float = 0) -> list:
         """生成OpenList下载链接（异步版本，使用OpenList API获取真实链接）
         
         工作原理：
@@ -590,6 +590,7 @@ class BiliDownloader(star.Star):
             video_title: 视频标题（用于匹配文件）
             page_info: 分P信息列表（用于匹配文件）
             selected_pages: 用户选择的分P（用于匹配文件）
+            start_time: 下载开始的时间戳（如果有，则只匹配此时间之后修改的文件）
         
         Returns:
             list: 包含文件信息的列表，每个元素包含 name 和 url
@@ -664,19 +665,35 @@ class BiliDownloader(star.Star):
                             # 检查是否是视频文件
                             file_ext = os.path.splitext(item)[1].lower()
                             if file_ext in video_extensions:
+                                # 3. 检查文件修改时间（如果提供了start_time）
+                                # 增加5秒的容差，处理系统时间微差或延迟
+                                if start_time > 0:
+                                    try:
+                                        mtime = os.path.getmtime(item_path)
+                                        if mtime < (start_time - 5):
+                                            logger.debug(f"文件修改时间过旧，跳过: {item} (mtime={mtime}, start_time={start_time})")
+                                            continue
+                                    except Exception as e:
+                                        logger.warning(f"无法获取文件修改时间 {item}: {e}")
+                                
                                 # 通过文件名匹配
                                 item_clean = item.replace(" ", "").replace("-", "").replace("_", "")
                                 
                                 # 如果有关键词，检查文件名是否包含关键词
-                                # 如果没有关键词（可能是BBDown输出解析失败），则接受所有视频文件
+                                # 如果没有关键词（可能是BBDown输出解析失败），则接受最近下载的视频文件
                                 if match_keywords:
                                     matched = any(keyword.lower() in item_clean.lower() for keyword in match_keywords if keyword)
                                     if not matched:
                                         logger.debug(f"文件名不匹配，跳过: {item}")
                                         continue
                                 else:
-                                    # 没有匹配关键词时，记录信息（可能是输出解析失败，但文件已下载）
-                                    logger.info(f"没有匹配关键词，接受所有视频文件: {item}")
+                                    if start_time > 0:
+                                        # 如果没有匹配关键词但有时间戳，我们接受最近的所有视频文件
+                                        logger.info(f"没有匹配关键词，接受时间戳匹配的视频文件: {item}")
+                                    else:
+                                        # 既没有关键词也没有时间戳，为了避免返回错误的旧文件，我们跳过
+                                        logger.warning(f"既没有关键词也没有下载时间戳，跳过文件以防错误: {item}")
+                                        continue
                                 
                                 logger.info(f"找到匹配的文件: {item}")
                                 
@@ -1368,6 +1385,11 @@ class BiliDownloader(star.Star):
                 current_config = self._get_current_config()
                 classify_by_owner = current_config.get("classify_by_owner", True)
                 cmd = self._build_bbdown_command(url, pages=selected_pages)
+                
+                # 记录下载开始时间，用于后续筛选文件
+                import time
+                download_start_time = time.time()
+                
                 return_code, stdout, stderr = await self._run_bbdown(cmd)
                 
                 # 保存用户选择的分P信息到实例变量，用于后续输出
@@ -1379,6 +1401,11 @@ class BiliDownloader(star.Star):
                 current_config = self._get_current_config()
                 classify_by_owner = current_config.get("classify_by_owner", True)
                 cmd = self._build_bbdown_command(url)
+                
+                # 记录下载开始时间
+                import time
+                download_start_time = time.time()
+                
                 return_code, stdout, stderr = await self._run_bbdown(cmd)
         
         # 合并输出用于分析
@@ -1594,8 +1621,10 @@ class BiliDownloader(star.Star):
             selected_pages_info = getattr(self, '_last_selected_pages', None)
             # 使用异步方式生成链接（因为需要调用OpenList API）
             # 通过文件名匹配找到对应的文件
+            # 传入 download_start_time 确保只显示本次下载的文件
+            start_time = locals().get('download_start_time', 0)
             alist_links = await self._generate_alist_links_async(
-                current_config, video_title, page_info, selected_pages_info
+                current_config, video_title, page_info, selected_pages_info, start_time=start_time
             )
             if alist_links:
                 result_msg += "─" * 30 + "\n"

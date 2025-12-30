@@ -107,43 +107,31 @@
             "type": "string",
             "description": "短链服务API地址",
             "default": "",
-            "hint": "短链服务的API地址\n\n推荐的开源短链服务：\n- ShortLinks: https://github.com/Sube3494/shortlinks\n- YOURLS: https://yourls.org/\n- Polr: https://github.com/cydrobolt/polr\n- Kutt: https://github.com/thedevs-network/kutt\n- Shlink: https://shlink.io/"
-          },
-          "method": {
-            "type": "string",
-            "description": "请求方法",
-            "default": "POST",
-            "hint": "API请求方法：POST 或 GET"
-          },
-          "data_key": {
-            "type": "string",
-            "description": "POST请求的数据字段名",
-            "default": "url",
-            "hint": "POST请求时，原始URL在请求体中的字段名，常见值：url、target、longUrl等"
-          },
-          "params_key": {
-            "type": "string",
-            "description": "GET请求的参数名",
-            "default": "url",
-            "hint": "GET请求时，原始URL作为URL参数的参数名"
+            "hint": "短链服务的访问地址（如：https://shortlinks.example.com）。\n\n注意：程序会自动补全 /api/shorten 路径。"
           },
           "api_key": {
             "type": "string",
             "description": "API密钥（可选）",
             "default": "",
-            "hint": "如果短链服务需要API密钥进行认证，填写在这里。如果不设置或设置为空，则不启用认证"
+            "hint": "如果短链服务需要授权，请填写 API 密钥。"
           },
-          "auth_method": {
-            "type": "string",
-            "description": "认证方式",
-            "default": "header",
-            "hint": "API密钥的传递方式：header（请求头）或 query（URL参数）"
+          "expiry_value": {
+            "type": "int",
+            "description": "过期时间数值",
+            "default": 30,
+            "hint": "短链过期的数值，配合下方的单位使用。例如数值填 30，单位选 分钟，则短链 30 分钟后过期。"
           },
-          "auth_header": {
+          "expiry_unit": {
             "type": "string",
-            "description": "认证头字段名（可选）",
-            "default": "X-API-Key",
-            "hint": "如果使用Header认证方式，指定在请求头中的字段名，例如：X-API-Key、Authorization等"
+            "description": "过期时间单位",
+            "default": "分钟",
+            "options": [
+              "分钟",
+              "小时",
+              "天",
+              "永久有效"
+            ],
+            "hint": "设置短链的有效期。如果选择“永久有效”，则忽略上方的数值设置。"
           }
         }
       },
@@ -168,4 +156,3 @@
     }
   }
 }
-
